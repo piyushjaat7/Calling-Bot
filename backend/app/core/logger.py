@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
 
 from loguru import logger
 
-from app.config.settings import PROJECT_ROOT, Settings, get_settings
+from backend.app.config.settings import PROJECT_ROOT, Settings, get_settings
 
 # Loguru ships ``Logger``/``Record`` only in its type stub, so they are
 # imported exclusively for static analysis and aliased for runtime safety.
@@ -512,7 +512,7 @@ def timed(module: str = "") -> Callable[[F], F]:
     """Decorate a callable (sync or async) to measure and log its duration.
 
     Example:
-        >>> from app.core.logger import timed
+        >>> from backend.app.core.logger import timed
         >>>
         >>> @timed(module="llm")
         ... async def generate(prompt): ...
