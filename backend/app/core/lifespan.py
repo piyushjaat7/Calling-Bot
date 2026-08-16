@@ -40,8 +40,9 @@ from typing import TYPE_CHECKING, Any, Final
 from fastapi import FastAPI
 from loguru import logger
 
-from backend.app.config.settings import Settings, get_settings
+from backend.app.config.settings import AppEnvironment, Settings, get_settings
 from backend.app.core.logger import configured_log_files, get_logger
+from backend.app.database import get_engine, init_database
 
 # Loguru types only exist in the type stub -> import for static analysis only.
 if TYPE_CHECKING:
@@ -62,14 +63,31 @@ type Lifespan = Callable[[FastAPI], AbstractAsyncContextManager[None]]
 
 
 # -- Future service placeholder hooks ------------------------------------
-# Each hook body is currently an empty placeholder so the orchestration
-# wiring is real and testable while the subsystems are still unimplemented.
-# A future sprint edits only the body of its hook, keeping the pair
-# registered below untouched.
+# Startup and cleanup hooks are *real* orchestration points: each hook
+# registers/tears down its subsystem into ``app.state``. Hooks of subsystems
+# that are not implemented yet remain empty placeholders, edited only by
+# their own future sprint, keeping the pair registered below untouched.
 
 
 async def _startup_postgres(app: FastAPI, config: Settings) -> None:
-    """Register the PostgreSQL engine into ``app.state`` (database sprint)."""
+    """Register the PostgreSQL engine into ``app.state`` (database sprint).
+
+    Creates (or connects to) the schema through ``Base.metadata.create_all``
+    and exposes the shared engine so other subsystems can build their own
+    session factories. Outside ``PRODUCTION`` the app keeps serving with an
+    in-memory fallback when the database is unavailable; in production a
+    missing database is a hard startup failure.
+    """
+    try:
+        engine = get_engine(config)
+        await init_database(engine)
+        app.state.database_engine = engine
+    except Exception as exc:
+        if config.environment is AppEnvironment.PRODUCTION:
+            raise
+        _log.warning(
+            f"PostgreSQL unavailable ({exc}); continuing with in-memory state"
+        )
 
 
 async def _startup_redis(app: FastAPI, config: Settings) -> None:
@@ -98,6 +116,9 @@ async def _startup_tools(app: FastAPI, config: Settings) -> None:
 
 async def _cleanup_postgres(app: FastAPI, config: Settings) -> None:
     """Dispose the PostgreSQL engine and pool (database sprint)."""
+    engine = getattr(app.state, "database_engine", None)
+    if engine is not None:
+        await engine.dispose()
 
 
 async def _cleanup_redis(app: FastAPI, config: Settings) -> None:

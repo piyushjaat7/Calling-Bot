@@ -107,6 +107,18 @@ class TelephonyProvider(StrEnum):
     PLIVO = "plivo"
 
 
+class SttProvider(StrEnum):
+    """Supported speech-to-text providers."""
+
+    VOSK = "vosk"
+
+
+class TtsProvider(StrEnum):
+    """Supported text-to-speech providers."""
+
+    PYTTSX3 = "pyttsx3"
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers shared by the validation rules.
 # ---------------------------------------------------------------------------
@@ -252,6 +264,40 @@ class Settings(BaseSettings):
     telephony_twilio_phone_number: str | None = Field(
         default=None
     )  # ENV: TELEPHONY_TWILIO_PHONE_NUMBER
+
+    # -- Speech-to-Text --------------------------------------------------------
+    # ``stt_default_provider`` selects the active adapter; ``None`` means the
+    # STT layer is unconfigured (the API endpoint still works — the router
+    # default only reads model settings lazily). Vosk runs fully locally:
+    # no API key, no internet, no GPU. The model directory is *never*
+    # committed; point ``STT_VOSK_MODEL_PATH`` at a downloaded model (e.g.
+    # ``vosk-model-small-en-us-0.15`` extracted next to the repository).
+    stt_default_provider: SttProvider | None = Field(
+        default=None
+    )  # ENV: STT_DEFAULT_PROVIDER
+    stt_vosk_model_path: str = Field(
+        default="models/vosk"
+    )  # ENV: STT_VOSK_MODEL_PATH
+    stt_max_audio_bytes: int = Field(
+        default=10 * 1024 * 1024, ge=1024
+    )  # ENV: STT_MAX_AUDIO_BYTES
+
+    # -- Text-to-Speech --------------------------------------------------------
+    # ``tts_default_provider`` selects the active adapter; ``None`` means the
+    # TTS layer is unconfigured (the API endpoint still works — the router
+    # default only initializes the engine lazily). Pyttsx3 drives the
+    # built-in Windows SAPI5 voices: fully local, no API key, no internet,
+    # no model downloads. Leave ``tts_pyttsx3_voice`` empty to use the
+    # system default voice.
+    tts_default_provider: TtsProvider | None = Field(
+        default=None
+    )  # ENV: TTS_DEFAULT_PROVIDER
+    tts_pyttsx3_voice: str = Field(
+        default=""
+    )  # ENV: TTS_PYTTSX3_VOICE
+    tts_max_text_chars: int = Field(
+        default=1000, ge=1
+    )  # ENV: TTS_MAX_TEXT_CHARS
 
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE_PATH),
