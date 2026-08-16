@@ -13,8 +13,12 @@ validation and lifecycle transitions live in ``Conversation``/``Message``
 lookup happens through :class:`~backend.app.conversation.ports.SessionPort`
 so the engine never touches any repository.
 
-Conversations are held in an in-memory registry owned by the engine
-instance; persistence is out of scope for this stage.
+Persistence is optional and plugs in behind the
+:class:`~backend.app.conversation.ports.ConversationRepository` port: when a
+repository is configured, the engine persists the conversation after every
+mutation (user message, assistant message, end) and resolves referenced
+conversations from storage instead of its registry; without one it keeps
+conversations in an in-memory registry owned by the engine instance.
 """
 
 from __future__ import annotations
@@ -25,7 +29,12 @@ from uuid import UUID
 from backend.app.conversation.context import SessionView, build_context
 from backend.app.conversation.conversation import Conversation
 from backend.app.conversation.message import Message, MessageRole
-from backend.app.conversation.ports import LlmPort, LlmResponse, SessionPort
+from backend.app.conversation.ports import (
+    ConversationRepository,
+    LlmPort,
+    LlmResponse,
+    SessionPort,
+)
 from backend.app.conversation.schemas import EngineResult, UserTurn
 from backend.app.core.logger import LogContext, bind_context, get_logger
 
@@ -85,11 +94,21 @@ class ConversationEngine:
     Args:
         llm: The assistant-text generator port.
         sessions: The session lookup port.
+        repository: Optional persistence port. When provided, every
+            conversation is persisted after each mutation and referenced
+            conversations are resolved from storage; otherwise the engine
+            keeps conversations in its in-memory registry.
     """
 
-    def __init__(self, llm: LlmPort, sessions: SessionPort) -> None:
+    def __init__(
+        self,
+        llm: LlmPort,
+        sessions: SessionPort,
+        repository: ConversationRepository | None = None,
+    ) -> None:
         self._llm: LlmPort = llm
         self._sessions: SessionPort = sessions
+        self._repository: ConversationRepository | None = repository
         self._conversations: dict[UUID, Conversation] = {}
         self._log: Logger = get_logger("conversation")
 
@@ -120,15 +139,17 @@ class ConversationEngine:
         if session is None:
             raise UnknownSessionError(turn.session_id)
 
-        conversation: Conversation = self._obtain_conversation(turn)
+        conversation: Conversation = await self._obtain_conversation(turn)
         user_message: Message = conversation.add_message(
             MessageRole.USER, turn.content
         )
+        await self._persist(conversation)
         context = build_context(conversation, session=session)
         response: LlmResponse = await self._llm.generate(context)
         assistant_message: Message = conversation.add_message(
             MessageRole.ASSISTANT, response.content
         )
+        await self._persist(conversation)
 
         self._log_context(turn.session_id).info(
             f"User turn processed for conversation {conversation.conversation_id}"
@@ -154,28 +175,43 @@ class ConversationEngine:
             ConversationNotFoundError: When the conversation is unknown.
             ConversationClosedError: When the conversation is already ended.
         """
-        conversation: Conversation | None = self._conversations.get(conversation_id)
+        if self._repository is not None:
+            conversation = await self._repository.get(conversation_id)
+        else:
+            conversation = self._conversations.get(conversation_id)
         if conversation is None:
             raise ConversationNotFoundError(conversation_id)
         conversation.end()
+        await self._persist(conversation)
         self._log_context(conversation.session_id).info(
             f"Conversation {conversation_id} ended"
         )
         return conversation
 
-    def _obtain_conversation(self, turn: UserTurn) -> Conversation:
+    async def _obtain_conversation(self, turn: UserTurn) -> Conversation:
         """Create a new conversation or resolve the referenced one."""
         if turn.conversation_id is not None:
-            conversation = self._conversations.get(turn.conversation_id)
+            if self._repository is not None:
+                conversation = await self._repository.get(turn.conversation_id)
+            else:
+                conversation = self._conversations.get(turn.conversation_id)
             if conversation is None:
                 raise ConversationNotFoundError(turn.conversation_id)
             if conversation.session_id != turn.session_id:
                 raise SessionMismatchError(turn.conversation_id, turn.session_id)
             return conversation
 
+        if self._repository is not None:
+            return Conversation(session_id=turn.session_id)
+
         conversation = Conversation(session_id=turn.session_id)
         self._conversations[conversation.conversation_id] = conversation
         return conversation
+
+    async def _persist(self, conversation: Conversation) -> None:
+        """Persist the conversation through the repository, when configured."""
+        if self._repository is not None:
+            await self._repository.save(conversation)
 
     def _log_context(self, session_id: UUID) -> Logger:
         """Return the module logger bound with the session context."""

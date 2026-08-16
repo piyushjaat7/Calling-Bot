@@ -3,10 +3,15 @@
 :class:`SessionRepository` is an async ``Protocol``: the
 :class:`~backend.app.session.service.SessionService` depends on it and
 therefore never knows (or cares) whether sessions live in memory,
-PostgreSQL, Redis or anywhere else. Only one implementation ships today —
-:class:`SessionInMemoryRepository` — because the module is deliberately
-persistence-free; future database adapters plug in behind the same
-interface without touching the domain or the service.
+PostgreSQL, Redis or anywhere else. Two implementations ship today:
+
+* :class:`SessionInMemoryRepository` — the development/test in-memory
+  adapter,
+* :class:`SessionPostgresRepository` — the production adapter backed by
+  PostgreSQL (SQLAlchemy async).
+
+Future database adapters plug in behind the same interface without touching
+the domain or the service.
 """
 
 from __future__ import annotations
@@ -15,7 +20,11 @@ import asyncio
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from backend.app.session.model import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from backend.app.database.models import SessionRecord
+from backend.app.session.model import Session, SessionStatus
 
 
 @runtime_checkable
@@ -104,4 +113,85 @@ class SessionInMemoryRepository:
             self._sessions[session.session_id] = session
 
 
-__all__ = ["SessionInMemoryRepository", "SessionRepository"]
+class SessionPostgresRepository:
+    """Async ``SessionRepository`` backed by PostgreSQL (SQLAlchemy).
+
+    Args:
+        session_factory: An ``async_sessionmaker`` bound to the database
+            engine.
+    """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory: async_sessionmaker[AsyncSession] = session_factory
+
+    async def add(self, session: Session) -> None:
+        """Store a new session (see :class:`SessionRepository`).
+
+        Raises:
+            ValueError: When a session with the same identity exists.
+        """
+        async with self._session_factory() as db, db.begin():
+            if await db.get(SessionRecord, session.session_id) is not None:
+                raise ValueError(f"Session {session.session_id} already exists.")
+            db.add(self._to_record(session))
+
+    async def get(self, session_id: UUID) -> Session | None:
+        """Return the stored session, or ``None`` (see :class:`SessionRepository`)."""
+        async with self._session_factory() as db:
+            row: SessionRecord | None = await db.get(SessionRecord, session_id)
+        return self._to_domain(row) if row is not None else None
+
+    async def list(self) -> list[Session]:
+        """Return every stored session in deterministic order."""
+        async with self._session_factory() as db:
+            rows = (
+                (
+                    await db.execute(
+                        select(SessionRecord).order_by(
+                            SessionRecord.start_time, SessionRecord.session_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [self._to_domain(row) for row in rows]
+
+    async def update(self, session: Session) -> None:
+        """Persist changes of an existing session (see :class:`SessionRepository`).
+
+        Raises:
+            KeyError: When no session with that identity is stored.
+        """
+        async with self._session_factory() as db, db.begin():
+            row: SessionRecord | None = await db.get(
+                SessionRecord, session.session_id
+            )
+            if row is None:
+                raise KeyError(session.session_id)
+            row.start_time = session.start_time
+            row.end_time = session.end_time
+            row.status = session.status.value
+
+    @staticmethod
+    def _to_record(session: Session) -> SessionRecord:
+        """Map the domain session onto its storage record."""
+        return SessionRecord(
+            session_id=session.session_id,
+            start_time=session.start_time,
+            end_time=session.end_time,
+            status=session.status.value,
+        )
+
+    @staticmethod
+    def _to_domain(row: SessionRecord) -> Session:
+        """Rebuild the domain session from its storage record."""
+        return Session(
+            session_id=row.session_id,
+            start_time=row.start_time,
+            end_time=row.end_time,
+            status=SessionStatus(row.status),
+        )
+
+
+__all__ = ["SessionInMemoryRepository", "SessionPostgresRepository", "SessionRepository"]

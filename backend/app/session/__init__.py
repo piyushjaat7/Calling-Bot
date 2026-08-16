@@ -23,6 +23,7 @@ from backend.app.session.exceptions import (
 from backend.app.session.model import Session, SessionStatus, utc_now
 from backend.app.session.repository import (
     SessionInMemoryRepository,
+    SessionPostgresRepository,
     SessionRepository,
 )
 from backend.app.session.router import get_session_service, router
@@ -38,6 +39,7 @@ __all__ = [
     "SessionError",
     "SessionInMemoryRepository",
     "SessionNotFoundError",
+    "SessionPostgresRepository",
     "SessionRepository",
     "SessionResponse",
     "SessionService",

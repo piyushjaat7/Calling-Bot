@@ -34,7 +34,13 @@ from backend.app.conversation.events import (
     state_changed_event,
 )
 from backend.app.conversation.message import MAX_MESSAGE_CHARS, Message, MessageRole
-from backend.app.conversation.ports import LlmPort, LlmResponse, SessionPort
+from backend.app.conversation.ports import (
+    ConversationRepository,
+    LlmPort,
+    LlmResponse,
+    SessionPort,
+)
+from backend.app.conversation.repository import ConversationPostgresRepository
 from backend.app.conversation.schemas import (
     EngineResult,
     MessageView,
@@ -62,6 +68,8 @@ __all__ = [
     "ConversationEvent",
     "ConversationEventType",
     "ConversationNotFoundError",
+    "ConversationPostgresRepository",
+    "ConversationRepository",
     "ConversationState",
     "ConversationStateMachine",
     "EngineResult",

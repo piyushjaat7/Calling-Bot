@@ -20,11 +20,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend.app.database import get_async_session_factory
 from backend.app.session.exceptions import (
     SessionNotFoundError,
     SessionStateError,
 )
-from backend.app.session.repository import SessionInMemoryRepository
+from backend.app.session.repository import SessionPostgresRepository
 from backend.app.session.schemas import (
     SessionData,
     SessionEndRequest,
@@ -32,9 +33,10 @@ from backend.app.session.schemas import (
 )
 from backend.app.session.service import SessionService
 
-#: Shared default service backed by the in-memory repository until a
-#: database-backed adapter is introduced; tests replace the dependency.
-_default_service: SessionService = SessionService(SessionInMemoryRepository())
+#: Shared default service backed by PostgreSQL; tests replace the dependency.
+_default_service: SessionService = SessionService(
+    SessionPostgresRepository(get_async_session_factory())
+)
 
 #: Router carrying the session lifecycle endpoints.
 router = APIRouter(prefix="/session", tags=["session"])

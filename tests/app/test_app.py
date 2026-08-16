@@ -26,8 +26,22 @@ from tests.conversation.fakes import FakeLlmPort
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
-    """A TestClient around the real application factory."""
-    with TestClient(create_app()) as test_client:
+    """A TestClient around the real application factory.
+
+    The production defaults (PostgreSQL-backed repositories) are replaced
+    with in-memory instances so the suite runs without a database server;
+    the application-level wiring (lifespan, routers) is exercised as-is.
+    """
+    app = create_app()
+    repository = SessionInMemoryRepository()
+    service = SessionService(repository)
+    engine = ConversationEngine(
+        llm=FakeLlmPort(),
+        sessions=ServiceSessionPort(service),
+    )
+    app.dependency_overrides[get_session_service] = lambda: service
+    app.dependency_overrides[get_conversation_engine] = lambda: engine
+    with TestClient(app) as test_client:
         yield test_client
 
 

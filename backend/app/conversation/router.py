@@ -9,9 +9,10 @@ The router only translates HTTP input/output and delegates to the engine;
 no business logic lives here. The engine is injected through a FastAPI
 dependency and replaced by tests with ``app.dependency_overrides``.
 
-The default engine is wired through the real ports: the shared in-memory
-session service (the same instance the Session router uses) and the local
-Ollama adapter behind the ``LlmPort``.
+The default engine is wired through the real ports: the shared session
+service (the same instance the Session router uses, backed by PostgreSQL)
+and the local Ollama adapter behind the ``LlmPort``, with a PostgreSQL
+conversation repository behind the persistence port.
 """
 
 from __future__ import annotations
@@ -27,16 +28,19 @@ from backend.app.conversation.engine import (
     SessionMismatchError,
     UnknownSessionError,
 )
+from backend.app.conversation.repository import ConversationPostgresRepository
 from backend.app.conversation.schemas import TurnResponse, UserTurn
+from backend.app.database import get_async_session_factory
 from backend.app.llm.exceptions import LlmError
 from backend.app.llm.ollama import OllamaAdapter
 from backend.app.session.router import get_session_service
 from backend.app.session.session_port import ServiceSessionPort
 
-#: Shared default engine: real ports (in-memory sessions + local Ollama).
+#: Shared default engine: real ports (PostgreSQL sessions + local Ollama).
 _default_engine: ConversationEngine = ConversationEngine(
     llm=OllamaAdapter(),
     sessions=ServiceSessionPort(get_session_service()),
+    repository=ConversationPostgresRepository(get_async_session_factory()),
 )
 
 #: Router carrying the conversation endpoints.

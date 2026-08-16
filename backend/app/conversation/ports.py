@@ -13,6 +13,9 @@ session facts or the assistant text:
   vocabulary exists anywhere in this package.
 * :class:`LlmResponse` — the provider-independent result type of the LLM
   port.
+* :class:`ConversationRepository` — persistence contract of conversations
+  and their messages. The engine persists through it when configured;
+  without one it falls back to its in-memory registry.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from backend.app.conversation.context import ConversationContext, SessionView
+from backend.app.conversation.conversation import Conversation
 
 
 @runtime_checkable
@@ -74,4 +78,40 @@ class LlmResponse:
     content: str
 
 
-__all__ = ["LlmPort", "LlmResponse", "SessionPort"]
+@runtime_checkable
+class ConversationRepository(Protocol):
+    """Persistence contract of conversations and their messages.
+
+    The engine persists a conversation through this port after each
+    mutation (user message, assistant message, end); it keeps no read
+    cache of its own, so the repository must return the full conversation
+    with every message, in insertion order. When the engine is created
+    without a repository it falls back to its in-memory registry.
+    """
+
+    async def get(self, conversation_id: UUID) -> Conversation | None:
+        """Return the stored conversation, or ``None`` when unknown.
+
+        Args:
+            conversation_id: The conversation to load.
+
+        Returns:
+            The hydrated conversation (with every message in sequence
+            order) when it exists, ``None`` otherwise.
+        """
+
+    async def save(self, conversation: Conversation) -> None:
+        """Persist the conversation and every message it holds.
+
+        Idempotent: re-saving the same conversation must not duplicate
+        messages or fail on existing rows.
+
+        Args:
+            conversation: The conversation to persist.
+
+        Raises:
+            Exception: Propagated from the backend when the write fails.
+        """
+
+
+__all__ = ["ConversationRepository", "LlmPort", "LlmResponse", "SessionPort"]
