@@ -9,6 +9,7 @@ is covered by its own test suite and never runs against a server.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterator
 
 import pytest
@@ -24,9 +25,13 @@ from backend.app.session.session_port import ServiceSessionPort
 from backend.app.stt.ports import SttResult
 from backend.app.stt.router import get_stt_service
 from backend.app.stt.service import SttService
+from backend.app.tts.ports import TtsResult
+from backend.app.tts.router import get_tts_service
+from backend.app.tts.service import TtsService
 from tests.conversation.fakes import FakeLlmPort
 from tests.stt.fakes import FakeSttPort
 from tests.stt.wav_builder import make_wav
+from tests.tts.fakes import FakeTtsPort
 
 
 @pytest.fixture
@@ -46,9 +51,11 @@ def client() -> Iterator[TestClient]:
         sessions=ServiceSessionPort(service),
     )
     stt_service = SttService(FakeSttPort(result=SttResult(text="hello world")))
+    tts_service = TtsService(FakeTtsPort())
     app.dependency_overrides[get_session_service] = lambda: service
     app.dependency_overrides[get_conversation_engine] = lambda: engine
     app.dependency_overrides[get_stt_service] = lambda: stt_service
+    app.dependency_overrides[get_tts_service] = lambda: tts_service
     with TestClient(app) as test_client:
         yield test_client
 
@@ -82,6 +89,39 @@ class TestApplicationBoot:
     def test_stt_router_is_mounted(self, client: TestClient) -> None:
         paths = client.get("/openapi.json").json()["paths"]
         assert "/stt/transcribe" in paths
+
+    def test_tts_router_is_mounted(self, client: TestClient) -> None:
+        paths = client.get("/openapi.json").json()["paths"]
+        assert "/tts/synthesize" in paths
+
+
+class TestTtsFlow:
+    def test_full_synthesis_flow_http_to_fake_port(self) -> None:
+        """HTTP -> FastAPI -> TTS router -> service -> fake port -> audio."""
+        tts_service = TtsService(
+            FakeTtsPort(
+                result=TtsResult(
+                    audio=make_wav(),
+                    sample_rate=16000,
+                    channels=1,
+                    bits_per_sample=16,
+                    duration_seconds=0.1,
+                )
+            )
+        )
+        app = create_app()
+        app.dependency_overrides[get_tts_service] = lambda: tts_service
+
+        with TestClient(app) as test_client:
+            response = test_client.post(
+                "/tts/synthesize",
+                json={"text": "Hello, this is Calling Bot."},
+            )
+            assert response.status_code == 200
+            data = response.json()["data"]
+            assert data["sample_rate"] == 16000
+            assert data["size_bytes"] == len(make_wav())
+            assert base64.b64decode(data["audio_base64"])[:4] == b"RIFF"
 
 
 class TestSttFlow:
