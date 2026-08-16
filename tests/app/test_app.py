@@ -21,16 +21,22 @@ from backend.app.session.repository import SessionInMemoryRepository
 from backend.app.session.router import get_session_service
 from backend.app.session.service import SessionService
 from backend.app.session.session_port import ServiceSessionPort
+from backend.app.stt.ports import SttResult
+from backend.app.stt.router import get_stt_service
+from backend.app.stt.service import SttService
 from tests.conversation.fakes import FakeLlmPort
+from tests.stt.fakes import FakeSttPort
+from tests.stt.wav_builder import make_wav
 
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
     """A TestClient around the real application factory.
 
-    The production defaults (PostgreSQL-backed repositories) are replaced
-    with in-memory instances so the suite runs without a database server;
-    the application-level wiring (lifespan, routers) is exercised as-is.
+    The production defaults (PostgreSQL-backed repositories, local STT
+    model) are replaced with in-memory/fake instances so the suite runs
+    without a database or a speech model; the application-level wiring
+    (lifespan, routers) is exercised as-is.
     """
     app = create_app()
     repository = SessionInMemoryRepository()
@@ -39,8 +45,10 @@ def client() -> Iterator[TestClient]:
         llm=FakeLlmPort(),
         sessions=ServiceSessionPort(service),
     )
+    stt_service = SttService(FakeSttPort(result=SttResult(text="hello world")))
     app.dependency_overrides[get_session_service] = lambda: service
     app.dependency_overrides[get_conversation_engine] = lambda: engine
+    app.dependency_overrides[get_stt_service] = lambda: stt_service
     with TestClient(app) as test_client:
         yield test_client
 
@@ -70,6 +78,26 @@ class TestApplicationBoot:
         assert "/session/start" in paths
         assert "/session/end" in paths
         assert "/session/{session_id}" in paths
+
+    def test_stt_router_is_mounted(self, client: TestClient) -> None:
+        paths = client.get("/openapi.json").json()["paths"]
+        assert "/stt/transcribe" in paths
+
+
+class TestSttFlow:
+    def test_full_transcription_flow_http_to_fake_port(self) -> None:
+        """HTTP -> FastAPI -> STT router -> service -> fake port -> text."""
+        stt_service = SttService(FakeSttPort(result=SttResult(text="hello world")))
+        app = create_app()
+        app.dependency_overrides[get_stt_service] = lambda: stt_service
+
+        with TestClient(app) as test_client:
+            response = test_client.post(
+                "/stt/transcribe",
+                files={"file": ("sample.wav", make_wav(), "audio/wav")},
+            )
+            assert response.status_code == 200
+            assert response.json()["data"] == {"text": "hello world"}
 
 
 class TestApplicationFlow:
