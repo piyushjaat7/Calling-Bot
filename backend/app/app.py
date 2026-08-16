@@ -17,9 +17,9 @@ to reason about:
 
 The handlers, middlewares and routers are each registered by a small,
 single-responsibility private helper. Future modules (AI, WebSocket,
-telephony, memory, dashboard, sessions, logging endpoints) plug in by
-*appending* their router / middleware / hook to the relevant helper — the
-wiring here doubles as a living inventory of the backend and never requires
+telephony, memory, dashboard, logging endpoints) plug in by *appending*
+their router / middleware / hook to the relevant helper — the wiring here
+doubles as a living inventory of the backend and never requires
 restructuring ``create_app`` itself.
 
 Design goals
@@ -48,8 +48,10 @@ from starlette.middleware.cors import CORSMiddleware
 
 from backend.app.api.health import router as health_router
 from backend.app.config.settings import AppEnvironment, Settings, get_settings
+from backend.app.conversation.router import router as conversation_router
 from backend.app.core.lifespan import create_lifespan
 from backend.app.core.logger import get_logger, setup_logging
+from backend.app.session.router import router as session_router
 
 # Loguru only exposes the ``Logger`` type in its type stub, hence the
 # TYPE_CHECKING import with a runtime alias.
@@ -252,15 +254,18 @@ def _error_payload(message: str, error: Any | None = None) -> dict[str, Any]:
 def _register_routes(app: FastAPI) -> None:
     """Register every REST API router of the application.
 
-    Future modules (sessions, messages, memory, tools, settings, logs) each
-    ship an ``APIRouter`` instance; they are appended here in declaration
-    order and become reachable under the HTTP interface immediately. The
-    real-time WebSocket endpoints are registered the same way.
+    Health, session and conversation routers are mounted here; future
+    modules (messages, memory, tools, settings, logs) each ship an
+    ``APIRouter`` instance and are appended in declaration order to become
+    reachable under the HTTP interface immediately. The real-time WebSocket
+    endpoints are registered the same way.
 
     Args:
         app: The application to attach the routers to.
     """
     app.include_router(health_router)
+    app.include_router(session_router)
+    app.include_router(conversation_router)
 
 
 #: Public entry point of the module.

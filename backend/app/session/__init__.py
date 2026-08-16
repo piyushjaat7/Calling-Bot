@@ -28,8 +28,10 @@ from backend.app.session.repository import (
 from backend.app.session.router import get_session_service, router
 from backend.app.session.schemas import SessionData, SessionEndRequest, SessionResponse
 from backend.app.session.service import SessionService
+from backend.app.session.session_port import ServiceSessionPort
 
 __all__ = [
+    "ServiceSessionPort",
     "Session",
     "SessionData",
     "SessionEndRequest",
